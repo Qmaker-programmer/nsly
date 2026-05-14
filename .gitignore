@@ -1,6 +1,7 @@
 # Binarios
 nsly
 nsly.exe
+bin/
 
 # Archivos de la bóveda (¡NUNCA SUBAS ESTO!)
 .nsly_vault/
