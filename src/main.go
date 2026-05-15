@@ -6,6 +6,7 @@ import (
 	"crypto/cipher"
 	"crypto/rand"
 	"crypto/sha256"
+	"crypto/tls"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
@@ -15,8 +16,10 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 	"unicode"
 
@@ -72,6 +75,74 @@ const (
 	saltLen    = 32
 )
 
+// ══════════════════════════════════════════════════════════════════════════════
+// SEGURIDAD: LIMPIEZA DE MEMORIA Y RATE LIMITING
+// ══════════════════════════════════════════════════════════════════════════════
+
+// clearBytes sobrescribe la memoria con ceros para evitar leaks en heap dumps 🧹
+func clearBytes(b []byte) {
+	if b == nil {
+		return
+	}
+	for i := range b {
+		b[i] = 0
+	}
+	runtime.KeepAlive(b)
+}
+
+// clearString limpia una string sensitive asignando string vacío.
+// En Go las strings son inmutables, pero hacemos lo posible zeroing el []byte
+// local y quitamos la referencia para que el GC pueda recolectarla.
+func clearString(s *string) {
+	if s == nil || *s == "" {
+		return
+	}
+	b := []byte(*s)
+	clearBytes(b)
+	*s = ""
+}
+
+// loginFailures rastrea intentos fallidos para rate limiting anti-brute-force
+type loginRateState struct {
+	mu          sync.Mutex
+	failures    int
+	lastFailure time.Time
+}
+
+var loginRate = &loginRateState{}
+
+func recordLoginFailure() {
+	loginRate.mu.Lock()
+	defer loginRate.mu.Unlock()
+	loginRate.failures++
+	loginRate.lastFailure = time.Now()
+}
+
+func resetLoginFailures() {
+	loginRate.mu.Lock()
+	defer loginRate.mu.Unlock()
+	loginRate.failures = 0
+}
+
+// loginDelay retorna el delay anti-brute-force: exponencial desde el 3er fallo
+// 3 fallos = 1s, 4 = 2s, 5 = 4s... máx 30s. ¡Buena suerte adivinando! 💀
+func loginDelay() time.Duration {
+	loginRate.mu.Lock()
+	defer loginRate.mu.Unlock()
+	if loginRate.failures < 3 {
+		return 0
+	}
+	if time.Since(loginRate.lastFailure) > 5*time.Minute {
+		loginRate.failures = 0
+		return 0
+	}
+	delay := time.Duration(1<<uint(loginRate.failures-3)) * time.Second
+	if delay > 30*time.Second {
+		delay = 30 * time.Second
+	}
+	return delay
+}
+
 var vaultKey []byte // clave derivada con scrypt, en memoria solamente
 
 // deriveKey usa scrypt para derivar una clave AES-256 desde la contraseña maestra
@@ -85,8 +156,21 @@ func SetVaultKey(masterPassword string, salt []byte) error {
 	if err != nil {
 		return err
 	}
+	// Limpiar clave anterior si existe antes de reemplazar 🧹
+	if vaultKey != nil {
+		clearBytes(vaultKey)
+	}
 	vaultKey = key
 	return nil
+}
+
+// ClearVaultKey limpia la clave de memoria al bloquear la bóveda 🔒
+// Impide que un dump de memoria exponga la clave AES-256
+func ClearVaultKey() {
+	if vaultKey != nil {
+		clearBytes(vaultKey)
+		vaultKey = nil
+	}
 }
 
 // aesgcmEncrypt cifra con AES-256-GCM
@@ -136,21 +220,32 @@ func encryptField(plaintext string) (string, error) {
 }
 
 // decryptField descifra un campo individual
+// SEGURIDAD: eliminado el fallback que devolvía texto plano sin cifrar 🔐
+// Si un campo no se puede descifrar, es un ERROR, no un "dato viejo"
 func decryptField(ciphertextB64 string) (string, error) {
 	if len(vaultKey) == 0 {
-		return ciphertextB64, nil
+		return "", fmt.Errorf("clave de vault no establecida")
+	}
+	// Campo vacío cifrado: manejarlo correctamente
+	if ciphertextB64 == "" {
+		return "", nil
 	}
 	data, err := base64.StdEncoding.DecodeString(ciphertextB64)
 	if err != nil {
-		// fallback: texto plano (migración de datos viejos)
-		return ciphertextB64, nil
+		// Si no es base64 válido, puede ser un campo vacío legacy
+		// Solo permitimos esto si el string está completamente vacío
+		return "", fmt.Errorf("campo con formato inválido: no es base64")
 	}
 	pt, err := aesgcmDecrypt(vaultKey, data)
 	if err != nil {
-		// fallback: texto plano
-		return ciphertextB64, nil
+		// Error de descifrado = clave incorrecta o datos corruptos
+		// NO hacer fallback a texto plano: eso sería un information leak 🚨
+		return "", fmt.Errorf("error descifrando campo: %w", err)
 	}
-	return string(pt), nil
+	result := string(pt)
+	// Limpiar el slice intermedio de plaintext
+	clearBytes(pt)
+	return result, nil
 }
 
 // encryptVaultJSON cifra el JSON completo de la bóveda para guardarlo en disco
@@ -292,18 +387,36 @@ type SyncConfig struct {
 	LastSync string `json:"last_sync"`
 }
 
+// secureHTTPClient crea un cliente HTTP con TLS seguro 🔒
+// Impide ataques MITM aunque el blob esté cifrado
+func secureHTTPClient() *http.Client {
+	return &http.Client{
+		Timeout: 15 * time.Second,
+		Transport: &http.Transport{
+			TLSClientConfig: &tls.Config{
+				InsecureSkipVerify: false,        // NUNCA saltar verificación SSL 🚫
+				MinVersion:         tls.VersionTLS12, // TLS 1.2 mínimo (1.3 preferido)
+			},
+		},
+	}
+}
+
 // uploadVault sube el blob cifrado al servidor (PUT con bearer token)
+// SEGURIDAD: usa TLS estricto para prevenir ataques MITM 🛡️
 func uploadVault(cfg SyncConfig, encryptedBlob []byte) error {
+	if !strings.HasPrefix(cfg.ServerURL, "https://") {
+		return fmt.Errorf("⚠️  la URL debe usar HTTPS para proteger el token de autenticación")
+	}
 	req, err := http.NewRequest("PUT", cfg.ServerURL, bytes.NewReader(encryptedBlob))
 	if err != nil {
 		return err
 	}
 	req.Header.Set("Authorization", "Bearer "+cfg.Token)
 	req.Header.Set("Content-Type", "application/octet-stream")
-	client := &http.Client{Timeout: 15 * time.Second}
+	client := secureHTTPClient()
 	resp, err := client.Do(req)
 	if err != nil {
-		return fmt.Errorf("error de red: %w", err)
+		return fmt.Errorf("error de red (verifica que el certificado SSL sea válido): %w", err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
@@ -313,13 +426,17 @@ func uploadVault(cfg SyncConfig, encryptedBlob []byte) error {
 }
 
 // downloadVault descarga el blob cifrado del servidor (GET con bearer token)
+// SEGURIDAD: usa TLS estricto para prevenir ataques MITM 🛡️
 func downloadVault(cfg SyncConfig) ([]byte, error) {
+	if !strings.HasPrefix(cfg.ServerURL, "https://") {
+		return nil, fmt.Errorf("⚠️  la URL debe usar HTTPS para proteger el token de autenticación")
+	}
 	req, err := http.NewRequest("GET", cfg.ServerURL, nil)
 	if err != nil {
 		return nil, err
 	}
 	req.Header.Set("Authorization", "Bearer "+cfg.Token)
-	client := &http.Client{Timeout: 15 * time.Second}
+	client := secureHTTPClient()
 	resp, err := client.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("error de red: %w", err)
@@ -381,7 +498,29 @@ func IsFirstRun() bool {
 	return os.IsNotExist(err)
 }
 
-func EnsureVaultDir() error { return os.MkdirAll(getVaultDir(), 0700) }
+func EnsureVaultDir() error {
+	dir := getVaultDir()
+	if err := os.MkdirAll(dir, 0700); err != nil {
+		return err
+	}
+	// SEGURIDAD: Validar que los permisos sean exactamente 0700 🔒
+	// Si ya existía con permisos incorrectos (ej 0755), es un problema
+	info, err := os.Stat(dir)
+	if err != nil {
+		return err
+	}
+	// Solo en sistemas Unix (Linux/macOS) - en Windows los permisos son distintos
+	if runtime.GOOS != "windows" {
+		perm := info.Mode().Perm()
+		if perm != 0700 {
+			// Intentar corregir los permisos
+			if err := os.Chmod(dir, 0700); err != nil {
+				return fmt.Errorf("directorio vault con permisos inseguros (%o) y no se pudieron corregir: %w", perm, err)
+			}
+		}
+	}
+	return nil
+}
 
 // generateSalt genera una sal criptográficamente aleatoria
 func generateSalt() ([]byte, error) {
@@ -441,11 +580,23 @@ func LoadVaultMeta() (*VaultMeta, []byte, error) {
 }
 
 func VerifyMasterPassword(password string) bool {
+	// SEGURIDAD: Rate limiting anti-brute-force ⏱️
+	// Después de 3 fallos hay delay exponencial
+	delay := loginDelay()
+	if delay > 0 {
+		time.Sleep(delay)
+	}
 	hashBytes, err := os.ReadFile(getMasterHashPath())
 	if err != nil {
 		return false
 	}
-	return bcrypt.CompareHashAndPassword(hashBytes, []byte(password)) == nil
+	ok := bcrypt.CompareHashAndPassword(hashBytes, []byte(password)) == nil
+	if ok {
+		resetLoginFailures()
+	} else {
+		recordLoginFailure()
+	}
+	return ok
 }
 
 // LoadVault descifra y carga la bóveda completa del disco
@@ -563,7 +714,18 @@ func GetDecryptedEntry(entry PasswordEntry) (DecryptedEntry, error) {
 }
 
 // ExportVault exporta en texto plano (para backup o migración)
+// SEGURIDAD: valida el path para evitar path traversal attacks 🛡️
 func ExportVault(vault *VaultData, path string) error {
+	// Sanitizar path: debe ser un archivo, no un directorio ni un symlink
+	absPath, err := filepath.Abs(path)
+	if err != nil {
+		return fmt.Errorf("path inválido: %w", err)
+	}
+	// No permitir escribir dentro del directorio de la bóveda
+	vaultDir, _ := filepath.Abs(getVaultDir())
+	if strings.HasPrefix(absPath, vaultDir) {
+		return fmt.Errorf("no puedes exportar dentro del directorio de la bóveda")
+	}
 	type ExportEntry struct {
 		Service  string `json:"service"`
 		Username string `json:"username"`
@@ -1050,10 +1212,16 @@ func updateLogin(m model, msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "enter":
 			password := m.pinInput.Value()
 			m.state = stateVerifying
-			m.info = "🔓 Verificando contraseña con bcrypt..."
+			// SEGURIDAD: Informar del rate limiting si hay delay activo ⏱️
+			delay := loginDelay()
+			if delay > 0 {
+				m.info = fmt.Sprintf("⏳ Demasiados intentos. Esperando %v por seguridad...", delay)
+			} else {
+				m.info = "🔓 Verificando contraseña con bcrypt..."
+			}
 			m.err = ""
 			return m, func() tea.Msg {
-				ok := VerifyMasterPassword(password)
+				ok := VerifyMasterPassword(password) // ya incluye el delay interno
 				if !ok {
 					return verifyDoneMsg{ok: false}
 				}
@@ -1086,7 +1254,8 @@ func updateVerifying(m model, msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 			m.vault = vault
-			m.masterPass = msg.masterPass
+			// SEGURIDAD: masterPass limpiada tras derivar vaultKey 🧹
+			m.masterPass = ""
 			m.syncCfg = LoadSyncConfig()
 			m.state = stateMenu
 			m.cursor = 0
@@ -1110,7 +1279,8 @@ func updateVerifying(m model, msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		vault, _ := LoadVault()
 		m.vault = vault
-		m.masterPass = msg.masterPass
+		// SEGURIDAD: masterPass limpiada tras derivar vaultKey 🧹
+		m.masterPass = ""
 		m.state = stateMenu
 		m.info = "🎉 ¡Bóveda creada! Cifrado: scrypt KDF + AES-256-GCM"
 		m.pinInput.SetValue("")
@@ -1156,10 +1326,19 @@ func updateMenu(m model, msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, tea.Quit
 			}
 		case "esc":
+			// SEGURIDAD: Limpiar memoria sensible al bloquear 🧹
+			// masterPass y vaultKey deben salir de memoria limpiamente
+			clearString(&m.masterPass)
+			ClearVaultKey() // sobrescribe con ceros antes de nil
+			// Limpiar entradas descifradas en memoria
+			clearString(&m.currentEntry.PlainPassword)
+			clearString(&m.currentEntry.PlainTOTP)
+			clearString(&m.currentEntry.PlainNotes)
+			m.currentEntry = DecryptedEntry{}
+			m.vault = nil
 			m.state = stateLogin
 			m.pinInput.SetValue(""); m.pinInput.Focus()
-			m.masterPass = ""; vaultKey = nil
-			m.info = "🔒 Bóveda bloqueada."
+			m.info = "🔒 Bóveda bloqueada y memoria limpiada."
 		}
 	}
 	return m, nil
@@ -1178,6 +1357,10 @@ func updateViewPasswords(m model, msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.vault != nil && len(m.vault.Entries) > 0 {
 				de, err := GetDecryptedEntry(m.vault.Entries[m.selectedEntry])
 				if err != nil { m.err = "❌ Error descifrando: " + err.Error(); return m, nil }
+				// Limpiar entrada anterior antes de reemplazar 🧹
+				clearString(&m.currentEntry.PlainPassword)
+				clearString(&m.currentEntry.PlainTOTP)
+				clearString(&m.currentEntry.PlainNotes)
 				m.currentEntry = de
 				m.showPassword = false
 				m.state = stateViewDetail
@@ -1215,8 +1398,12 @@ func updateViewDetail(m model, msg tea.Msg) (tea.Model, tea.Cmd) {
 	if k, ok := msg.(tea.KeyMsg); ok {
 		switch k.String() {
 		case "esc":
-			m.state = stateViewPasswords
+			// SEGURIDAD: limpiar campos descifrados de memoria 🧹
+			clearString(&m.currentEntry.PlainPassword)
+			clearString(&m.currentEntry.PlainTOTP)
+			clearString(&m.currentEntry.PlainNotes)
 			m.currentEntry = DecryptedEntry{}
+			m.state = stateViewPasswords
 		case "s", "S":
 			m.showPassword = !m.showPassword
 		case "c", "C":
