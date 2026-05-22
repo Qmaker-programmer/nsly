@@ -15,7 +15,9 @@
 - Un terminal que no sea de hace 15 años
 
 ### Setup en 3 pasos
-
+**Si quieres solo instalarlo hazlo desde Releases: [Instalacion sencilla desde Releases](https://github.com/Qmaker-programmer/Nsly/releases)**
+---
+**Si quieres hacerlo tu mismo puedes usar Make o manualmente:**
 ```bash
 # 1️⃣ Clona y entra al directorio
 git clone https://github.com/Qmaker-programmer/Nsly.git
@@ -43,7 +45,7 @@ bin\\nsly.exe
 make run      # ejecución directa
 make build    # compilar binario
 make clean    # borrar lo compilado
-# O en el Makefile agrege algo para compilar a Linux, Windows y MacOS al mismo tiempo (Incluido ARM64 y AMD64)
+# O en el Makefile agrege algo para compilar a Linux, Windows y MacOS al mismo tiempo (Incluido ARM64 y AMD64), recomendado para produccion
 make build-all
 
 #todo esto quedara en bin/
