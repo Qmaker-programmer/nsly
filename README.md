@@ -149,16 +149,16 @@ golang.org/x/crypto              v0.18.0  → AES-256-GCM, scrypt, utils
 
 ✅ Lo que YA funciona
 
-✓ Cifrado AES-256-GCM — Tus contraseñas viajan blindadas
-✓ Generador de contraseñas seguras — Random de verdad (no ChatGPT)
-✓ Búsqueda en tiempo real — Encuentra esa contraseña que no recuerdas
-✓ Copiar al clipboard — No dejas rastro en el historial
-✓ Exportar JSON — Para migrar o hacer backup (¡cuidado!)
-✓ Medidor de fortaleza — Te dice si tu contraseña es patética
-✓ Confirmación antes de eliminar — Porque los accidentes suceden
-✓ TOTP / 2FA — Códigos de 6 dígitos para Google, GitHub, etc
-✓ Sincronización en la nube — Sube/descarga tu bóveda cifrada
-✓ Importar de otros gestores — Bitwarden, KeePass, formatos NSLY
+* **✓ Cifrado AES-256-GCM — Tus contraseñas viajan blindadas**
+* **✓ Generador de contraseñas seguras — Random de verdad (no AI)**
+* **✓ Búsqueda en tiempo real — Encuentra esa contraseña que no recuerdas**
+* **✓ Copiar al clipboard — No dejas rastro en el historial**
+* **✓ Exportar JSON — Para migrar o hacer backup (¡cuidado!)**
+* **✓ Medidor de fortaleza — Te dice si tu contraseña es patética**
+* **✓ Confirmación antes de eliminar — Porque los accidentes suceden**
+* **✓ TOTP / 2FA — Códigos de 6 dígitos para Google, GitHub, etc**
+* **✓ Sincronización en la nube — Sube/descarga tu bóveda cifrada**
+* **✓ Importar de otros gestores — Bitwarden, KeePass, formatos NSLY**
 
 🚀 En el roadmap (coming soon™)
 
