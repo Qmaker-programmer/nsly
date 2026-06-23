@@ -1,27 +1,30 @@
 # 🛡️ NSLY VAULT — Gestor de Contraseñas TUI
 
+<img src="icon.png" alt="icono" width="120"/>
+
 > Un gestor de contraseñas minimalista, seguro y **FACHERO** que vive en tu terminal 🖥️  
 > *Porque guardar contraseñas en un post-it es 2023, amigo.*
 
 ---
-## Vista previa!
+## Vista previa
+
 ![Imagen vista previa de NSLY](preview.png)
 
 ---
 ## 🚀 Instalación rápida
 
-### Prerequisitos
+### Prerrequisitos
 - **Go 1.21+** (si no lo tienes, [instálalo aquí](https://golang.org/dl))
 - Un terminal que no sea de hace 15 años
 
 ### Setup en 3 pasos
-**Si quieres solo instalarlo hazlo desde Releases: [Instalacion sencilla desde Releases](https://github.com/Qmaker-programmer/Nsly/releases)**
+**Si quieres solo instalarlo hazlo desde Releases: [Instalacion sencilla desde Releases](https://github.com/Qmaker-programmer/nsly/releases)**
 ---
 **Si quieres hacerlo tu mismo puedes usar Make o manualmente:**
 ```bash
 # 1️⃣ Clona y entra al directorio
-git clone https://github.com/Qmaker-programmer/Nsly.git
-cd Nsly
+git clone https://github.com/Qmaker-programmer/nsly.git
+cd nsly
 
 # 2️⃣ Descarga las dependencias (go hace todo)
 go mod tidy
@@ -45,7 +48,7 @@ bin\\nsly.exe
 make run      # ejecución directa
 make build    # compilar binario
 make clean    # borrar lo compilado
-# O en el Makefile agrege algo para compilar a Linux, Windows y MacOS al mismo tiempo (Incluido ARM64 y AMD64), recomendado para produccion
+# O en el Makefile agregué algo para compilar a Linux, Windows y MacOS al mismo tiempo (Incluido ARM64 y AMD64), recomendado para produccion
 make build-all
 
 #todo esto quedara en bin/
@@ -282,7 +285,7 @@ app.listen(3000, () => console.log('NSLY Sync server ready 🚀'));
 **Estructura del proyecto**
 
 ```
-Nsly/
+nsly/
 ├── README.md              ← Estás aquí 👋
 ├── go.mod                 ← Dependencias
 ├── go.sum                 ← Lockfile de dependencias
@@ -335,7 +338,7 @@ go vet ./...
 
 ---
 
-**"Olvidé mi contraseña maestra 😭"**
+**"Olvidé mi contraseña maestra"**
 
 *No hay recuperación. Es intencional.*
 
@@ -414,8 +417,8 @@ Esto significa:
 ## 🚀 ¡Empecemos!
 
 ```bash
-git clone https://github.com/Qmaker-programmer/Nsly.git
-cd Nsly
+git clone https://github.com/Qmaker-programmer/nsly.git
+cd nsly
 go run src/main.go
 
 # Crea tu contraseña maestra 🔐
@@ -423,4 +426,4 @@ go run src/main.go
 # Duerme tranquilo 😴
 ```
 
-**Por Qmaker (y mucho Té)en la terminal.**
+**Por Qmaker (y mucho Té) en la terminal.**
