@@ -2,8 +2,7 @@
 
 <img src="icon.png" alt="icono" width="120"/>
 
-> Un gestor de contraseñas minimalista, seguro y **FACHERO** que vive en tu terminal 🖥️  
-> *Porque guardar contraseñas en un post-it es 2023, amigo.*
+> Un gestor de contraseñas minimalista y seguro que vive en tu terminal 🖥️  
 
 ---
 ## Vista previa
