@@ -17,8 +17,13 @@
 - Un terminal que no sea de hace 15 años
 
 ### Setup en 3 pasos
+
 **Si quieres solo instalarlo hazlo desde Releases: [Instalacion sencilla desde Releases](https://github.com/Qmaker-programmer/nsly/releases)**
+
+
 ---
+
+
 **Si quieres hacerlo tu mismo puedes usar Make o manualmente:**
 ```bash
 # 1️⃣ Clona y entra al directorio
